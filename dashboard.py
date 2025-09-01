@@ -18,7 +18,7 @@ headers = {
 }
 
 # ==========================
-# 2. 원석 후보군 (16종 + 브랜드)
+# 2. 원석 후보군 (16종)
 # ==========================
 stones = {
     "호안석": ["호안석","호랑이눈","tiger eye"],
@@ -36,12 +36,14 @@ stones = {
     "페리도트": ["페리도트","peridot"],
     "아벤츄린": ["아벤츄린","aventurine"],
     "카넬리안": ["카넬리안","carnelian"],
-    "아쿠아마린": ["아쿠아마린","aquamarine"],
-    "리코맨즈": ["리코맨즈"]
+    "아쿠아마린": ["아쿠아마린","aquamarine"]
 }
 
+# 브랜드 따로 정의
+brand_keywords = {"리코맨즈": ["리코맨즈"]}
+
 # ==========================
-# 3. 데이터 수집
+# 3. 데이터 수집 함수
 # ==========================
 end = date.today()
 start = end - timedelta(days=365)
@@ -57,68 +59,103 @@ def fetch_group(group_dict):
     res.raise_for_status()
     return res.json()
 
-# 분할 호출 (최대 5개 제한)
+# ----- 원석 데이터 -----
 keys = list(stones.keys())
 rows = []
-for i in range(0, len(keys), 5):
+for i in range(0, len(keys), 5):  # 5개씩 분할 호출
     part = {k: stones[k] for k in keys[i:i+5]}
     js = fetch_group(part)
     for r in js["results"]:
         stone = r["title"]
         for d in r["data"]:
-            rows.append({"stone": stone, "date": d["period"], "ratio": d["ratio"]})
+            rows.append({"원석": stone, "날짜": d["period"], "검색량지수": d["ratio"]})
 
 df = pd.DataFrame(rows)
-df["date"] = pd.to_datetime(df["date"])
+df["날짜"] = pd.to_datetime(df["날짜"])
+
+# ----- 브랜드 데이터 -----
+brand_rows = []
+js_brand = fetch_group(brand_keywords)
+for r in js_brand["results"]:
+    brand = r["title"]
+    for d in r["data"]:
+        brand_rows.append({"브랜드": brand, "날짜": d["period"], "검색량지수": d["ratio"]})
+
+df_brand = pd.DataFrame(brand_rows)
+df_brand["날짜"] = pd.to_datetime(df_brand["날짜"])
 
 # ==========================
-# 4. 대시보드 레이아웃
+# 4. 추가 지표 계산
+# ==========================
+# 최근 평균
+df["최근7일평균"] = df.groupby("원석")["검색량지수"].transform(lambda x: x.rolling(7).mean())
+df["최근28일평균"] = df.groupby("원석")["검색량지수"].transform(lambda x: x.rolling(28).mean())
+
+latest2 = df.groupby("원석").tail(1)
+latest2["상승률(%)"] = ((latest2["최근7일평균"] - latest2["최근28일평균"]) / latest2["최근28일평균"] * 100).round(2)
+
+# 안정성 지표
+stab = df.groupby("원석")["검색량지수"].agg(평균검색량="mean", 표준편차="std")
+stab["변동계수"] = (stab["표준편차"] / stab["평균검색량"]).round(2)
+
+stable = stab.sort_values("변동계수").head(5).reset_index()
+unstable = stab.sort_values("변동계수", ascending=False).head(5).reset_index()
+
+# 시장 점유율
+latest3 = df.groupby("원석").tail(1)
+latest3["시장점유율(%)"] = (latest3["검색량지수"] / latest3["검색량지수"].sum() * 100).round(2)
+
+# ==========================
+# 5. 값 소수점 자리 제한
+# ==========================
+num_cols = ["검색량지수","최근7일평균","최근28일평균","상승률(%)","평균검색량","표준편차","변동계수","시장점유율(%)"]
+
+for col in num_cols:
+    if col in df.columns:
+        df[col] = df[col].round(2)
+    if col in df_brand.columns:
+        df_brand[col] = df_brand[col].round(2)
+    if col in latest2.columns:
+        latest2[col] = latest2[col].round(2)
+
+# ==========================
+# 6. 대시보드 레이아웃
 # ==========================
 st.set_page_config(page_title="리코맨즈 원석 트렌드 대시보드", layout="wide")
 st.title("리코맨즈 원석 트렌드 분석")
 
 # ----------------------------------
 # 현재 트렌드 TOP5
-latest = df.groupby("stone").tail(1)
-top5 = latest.sort_values("ratio", ascending=False).head(5)
-fig1 = px.bar(top5, x="stone", y="ratio", title="현재 검색량 Top5 원석")
+latest = df.groupby("원석").tail(1)
+top5 = latest.sort_values("검색량지수", ascending=False).head(5)
+fig1 = px.bar(top5, x="원석", y="검색량지수", title="현재 검색량 Top5 원석")
 st.plotly_chart(fig1, use_container_width=True)
 
 # ----------------------------------
 # 치고 올라오는 원석
-df["avg_7d"] = df.groupby("stone")["ratio"].transform(lambda x: x.rolling(7).mean())
-df["avg_28d"] = df.groupby("stone")["ratio"].transform(lambda x: x.rolling(28).mean())
-latest2 = df.groupby("stone").tail(1)
-latest2["rise_score"] = ((latest2["avg_7d"] - latest2["avg_28d"]) / latest2["avg_28d"] * 100).round(2)
-rising = latest2.sort_values("rise_score", ascending=False).head(5)
-fig2 = px.bar(rising, x="stone", y="rise_score", title="최근 28일 대비 7일 상승률 Top5")
+rising = latest2.sort_values("상승률(%)", ascending=False).head(5)
+fig2 = px.bar(rising, x="원석", y="상승률(%)", title="최근 28일 대비 7일 상승률 Top5")
 st.plotly_chart(fig2, use_container_width=True)
 
 # ----------------------------------
 # 브랜드 검색량 추이 (리코맨즈)
-brand = df[df["stone"]=="리코맨즈"]
-fig3 = px.line(brand, x="date", y="ratio", title="리코맨즈 검색량 추이")
+fig3 = px.line(df_brand, x="날짜", y="검색량지수", title="리코맨즈 검색량 추이")
 st.plotly_chart(fig3, use_container_width=True)
 
 # ----------------------------------
 # 시즌성 패턴 (월별 평균)
-st.header("📌 시즌성 패턴")
-sel = st.selectbox("원석 선택", df["stone"].unique())
+st.header(" 시즌성 패턴")
+sel = st.selectbox("원석 선택", df["원석"].unique())
 seasonality = df.copy()
-seasonality["month"] = seasonality["date"].dt.to_period("M")
-seasonality = seasonality.groupby(["stone","month"])["ratio"].mean().reset_index()
-seasonality["month"] = seasonality["month"].astype(str)
-fig4 = px.line(seasonality[seasonality["stone"]==sel], x="month", y="ratio", title=f"{sel} 월별 평균 검색량")
+seasonality["월"] = seasonality["날짜"].dt.to_period("M")
+seasonality = seasonality.groupby(["원석","월"])["검색량지수"].mean().reset_index()
+seasonality["월"] = seasonality["월"].astype(str)
+fig4 = px.line(seasonality[seasonality["원석"]==sel], x="월", y="검색량지수", title=f"{sel} 월별 평균 검색량")
 st.plotly_chart(fig4, use_container_width=True)
 
 # ----------------------------------
 # 안정성 지표
-stab = df.groupby("stone")["ratio"].agg(["mean","std"])
-stab["cv"] = (stab["std"]/stab["mean"]).round(2)
-stable = stab.sort_values("cv").head(5).reset_index()
-unstable = stab.sort_values("cv", ascending=False).head(5).reset_index()
-
-st.subheader("📌 안정성 지표")
+st.subheader(" 안정성 지표")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("**꾸준한 원석 Top5**")
@@ -129,7 +166,5 @@ with col2:
 
 # ----------------------------------
 # 검색 시장 점유율
-latest3 = df.groupby("stone").tail(1)
-latest3["share"] = (latest3["ratio"]/latest3["ratio"].sum()*100).round(2)
-fig5 = px.pie(latest3, names="stone", values="share", title="검색 시장 점유율")
+fig5 = px.pie(latest3, names="원석", values="시장점유율(%)", title="검색 시장 점유율")
 st.plotly_chart(fig5, use_container_width=True)
