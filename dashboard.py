@@ -124,23 +124,70 @@ for col in num_cols:
 st.set_page_config(page_title="리코맨즈 원석 트렌드 대시보드", layout="wide")
 st.title("리코맨즈 원석 트렌드 분석")
 
-# ----------------------------------
-# 현재 트렌드 TOP5
+# 원석별 최신 데이터 (여기서 미리 정의)
 latest = df.groupby("원석").tail(1)
-top5 = latest.sort_values("검색량지수", ascending=False).head(5)
-fig1 = px.bar(top5, x="원석", y="검색량지수", title="현재 검색량 Top5 원석")
-st.plotly_chart(fig1, use_container_width=True)
+
+# ----------------------------------
+# 현재 트렌드 TOP5 + 검색 시장 점유율 (한 줄 배치)
+st.subheader(" 현재 검색 현황(어제 기준)")
+col1, col2 = st.columns(2)
+
+with col1:
+    top5 = latest.sort_values("검색량지수", ascending=False).head(5)
+    fig1 = px.bar(top5, x="원석", y="검색량지수", title="검색량 Top5 원석")
+    st.plotly_chart(fig1, use_container_width=True)
+
+with col2:
+    fig5 = px.pie(latest3, names="원석", values="시장점유율(%)", title="검색 시장 점유율")
+    st.plotly_chart(fig5, use_container_width=True)
+
+# ----------------------------------
+# 어제 기준 Top 원석 장기 추세 (이동평균, 기본 1위 원석)
+st.subheader(" 어제 기준 Top 원석 장기 추세 (이동평균)")
+
+# Top5 원석 리스트 (어제 기준)
+top5_names = top5["원석"].tolist()
+
+# 현재 1위 원석 (top5의 첫 번째 행)
+first_rank = top5.iloc[0]["원석"]
+
+# 원석 선택 (기본값 = 1위 원석)
+selected_stone = st.selectbox(
+    "원석 선택 (어제 기준 Top5)", 
+    options=top5_names, 
+    index=0  # 첫 번째(=현재 1위 원석) 기본 선택
+)
+
+# 이동평균 기간 선택 (토글 느낌)
+ma_option = st.radio(
+    "이동평균 기간", 
+    options=[7, 28], 
+    index=0, 
+    horizontal=True
+)
+
+# 선택된 원석 데이터 필터링
+df_selected = df[df["원석"] == selected_stone].copy()
+df_selected[f"검색량_{ma_option}일평균"] = (
+    df_selected["검색량지수"].rolling(ma_option).mean()
+)
+
+# 라인 차트 (이동평균만 표시)
+fig = px.line(
+    df_selected,
+    x="날짜",
+    y=f"검색량_{ma_option}일평균",
+    title=f"{selected_stone} 검색량 {ma_option}일 이동평균 추이"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
 
 # ----------------------------------
 # 치고 올라오는 원석
 rising = latest2.sort_values("상승률(%)", ascending=False).head(5)
-fig2 = px.bar(rising, x="원석", y="상승률(%)", title="최근 28일 대비 7일 상승률 Top5")
+fig2 = px.bar(rising, x="원석", y="상승률(%)", title="최근 주간 검색량 급상승 Top5")
 st.plotly_chart(fig2, use_container_width=True)
-
-# ----------------------------------
-# 브랜드 검색량 추이 (리코맨즈)
-fig3 = px.line(df_brand, x="날짜", y="검색량지수", title="리코맨즈 검색량 추이")
-st.plotly_chart(fig3, use_container_width=True)
 
 # ----------------------------------
 # 시즌성 패턴 (월별 평균)
@@ -165,6 +212,16 @@ with col2:
     st.dataframe(unstable)
 
 # ----------------------------------
-# 검색 시장 점유율
-fig5 = px.pie(latest3, names="원석", values="시장점유율(%)", title="검색 시장 점유율")
-st.plotly_chart(fig5, use_container_width=True)
+# 브랜드 비교 섹션
+st.header("브랜드 검색량 변화 비교")  # 메인 섹션 제목 (굵고 크게)
+
+st.markdown("리코맨즈 브랜드 검색량의 변화를 확인합니다. "
+            "특정 시점(이벤트, 시즌, 개선 전후 등)과 비교 분석에 활용할 수 있습니다.")
+
+fig3 = px.line(
+    df_brand,
+    x="날짜",
+    y="검색량지수",
+    title="리코맨즈 검색량 추이"  # 그래프 안쪽 작은 제목
+)
+st.plotly_chart(fig3, use_container_width=True)
